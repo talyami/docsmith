@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Universal File-to-DOCX Converter API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: conversions
+    description: File conversion operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /conversions:
+    get:
+      operationId: listConversions
+      tags: [conversions]
+      summary: List recent conversions
+      description: Returns a list of recent file conversions
+      responses:
+        "200":
+          description: List of conversions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Conversion"
+  /conversions/{id}:
+    get:
+      operationId: getConversion
+      tags: [conversions]
+      summary: Get a conversion by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conversion details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversion"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteConversion
+      tags: [conversions]
+      summary: Delete a conversion record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /conversions/stats:
+    get:
+      operationId: getConversionStats
+      tags: [conversions]
+      summary: Get conversion statistics
+      description: Returns counts and breakdown of conversions by file type
+      responses:
+        "200":
+          description: Conversion statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionStats"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +106,78 @@ components:
           type: string
       required:
         - status
-
+    Conversion:
+      type: object
+      properties:
+        id:
+          type: integer
+        originalFilename:
+          type: string
+        originalExtension:
+          type: string
+        fileSize:
+          type: integer
+        status:
+          type: string
+          enum: [pending, processing, done, error]
+        errorMessage:
+          type: ["string", "null"]
+        downloadPath:
+          type: ["string", "null"]
+        processingMode:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - originalFilename
+        - originalExtension
+        - fileSize
+        - status
+        - errorMessage
+        - downloadPath
+        - processingMode
+        - createdAt
+        - updatedAt
+    ConversionStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        done:
+          type: integer
+        error:
+          type: integer
+        pending:
+          type: integer
+        byExtension:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtensionCount"
+      required:
+        - total
+        - done
+        - error
+        - pending
+        - byExtension
+    ExtensionCount:
+      type: object
+      properties:
+        extension:
+          type: string
+        count:
+          type: integer
+      required:
+        - extension
+        - count
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
