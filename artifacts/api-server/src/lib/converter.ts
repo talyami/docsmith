@@ -12,6 +12,7 @@ import {
   WidthType,
   BorderStyle,
   AlignmentType,
+  LevelFormat,
   convertMillimetersToTwip,
   TableOfContents,
 } from "docx";
@@ -50,6 +51,7 @@ interface ContentBlock {
   text?: string;
   segments?: TextSegment[];
   rows?: string[][];
+  level?: number; // 0-based nesting depth for bullet/numbered lists
 }
 
 function getProcessingMode(ext: string): ProcessingMode {
@@ -152,21 +154,21 @@ function makeParagraph(text: string, segments?: TextSegment[]): Paragraph {
   });
 }
 
-function makeBullet(text: string, segments?: TextSegment[]): Paragraph {
+function makeBullet(text: string, level = 0, segments?: TextSegment[]): Paragraph {
   const runs = segments ? segmentsToRuns(segments) : [new TextRun({ text: text ?? "", size: 22 })];
   return new Paragraph({
     children: runs,
-    bullet: { level: 0 },
-    spacing: { after: 80 },
+    bullet: { level: Math.min(level, 8) },
+    spacing: { after: 60 },
   });
 }
 
-function makeNumbered(text: string, num: number, segments?: TextSegment[]): Paragraph {
-  const prefixRun = new TextRun({ text: `${num}. `, size: 22 });
+function makeNumbered(text: string, level = 0, segments?: TextSegment[]): Paragraph {
   const contentRuns = segments ? segmentsToRuns(segments) : [new TextRun({ text: text ?? "", size: 22 })];
   return new Paragraph({
-    children: [prefixRun, ...contentRuns],
-    spacing: { after: 80 },
+    children: contentRuns,
+    numbering: { reference: "numbered-list", level: Math.min(level, 8) },
+    spacing: { after: 60 },
   });
 }
 
@@ -220,14 +222,9 @@ function makeTable(rows: string[][]): Table {
 
 function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
   const children: (Paragraph | Table)[] = [];
-  let numberedCount = 0;
 
   for (const block of blocks) {
-    if (block.type === "numbered") {
-      numberedCount++;
-    } else {
-      numberedCount = 0;
-    }
+    const level = block.level ?? 0;
 
     switch (block.type) {
       case "heading1":
@@ -254,10 +251,10 @@ function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
         );
         break;
       case "bullet":
-        children.push(makeBullet(block.text ?? "", block.segments));
+        children.push(makeBullet(block.text ?? "", level, block.segments));
         break;
       case "numbered":
-        children.push(makeNumbered(block.text ?? "", numberedCount, block.segments));
+        children.push(makeNumbered(block.text ?? "", level, block.segments));
         break;
       case "table":
         if (block.rows && block.rows.length > 0) {
@@ -276,14 +273,29 @@ function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
 
 function buildDocx(blocks: ContentBlock[]): Promise<Buffer> {
   const toc = new TableOfContents("Table of Contents", {
-    hyperlink: true,
     headingStyleRange: "1-3",
   });
 
   const bodyChildren = blocksToDocxChildren(blocks);
 
+  // Build multilevel numbering (9 levels of decimal numbering)
+  const numberedLevels = Array.from({ length: 9 }, (_, i) => ({
+    level: i,
+    format: LevelFormat.DECIMAL,
+    text: `%${i + 1}.`,
+    alignment: AlignmentType.START,
+    style: {
+      paragraph: {
+        indent: { left: 360 + i * 360, hanging: 260 },
+      },
+      run: { font: "Calibri", size: 22 },
+    },
+  }));
+
   const doc = new Document({
-    features: { updateFields: true },
+    numbering: {
+      config: [{ reference: "numbered-list", levels: numberedLevels }],
+    },
     sections: [
       {
         properties: {
@@ -411,12 +423,14 @@ async function parseMarkdown(content: string): Promise<ContentBlock[]> {
       blocks.push({ type: "heading3", text: line.slice(4).trim() });
     } else if (line.startsWith("#### ") || line.startsWith("##### ")) {
       blocks.push({ type: "heading3", text: line.replace(/^#+\s/, "").trim() });
-    } else if (line.startsWith("- ") || line.startsWith("* ")) {
-      const text = line.slice(2).trim();
-      blocks.push({ type: "bullet", text, segments: parseInlineMarkdown(text) });
-    } else if (/^\d+\.\s/.test(line)) {
-      const text = line.replace(/^\d+\.\s/, "").trim();
-      blocks.push({ type: "numbered", text, segments: parseInlineMarkdown(text) });
+    } else if (/^(\s+)?[-*+]\s/.test(line)) {
+      const lvl = indentLevel(line);
+      const text = line.trim().replace(/^[-*+]\s+/, "");
+      blocks.push({ type: "bullet", text, level: lvl, segments: parseInlineMarkdown(text) });
+    } else if (/^(\s+)?\d+\.\s/.test(line)) {
+      const lvl = indentLevel(line);
+      const text = line.trim().replace(/^\d+\.\s+/, "");
+      blocks.push({ type: "numbered", text, level: lvl, segments: parseInlineMarkdown(text) });
     } else if (line.trim() === "---" || line.trim() === "***" || line.trim() === "___") {
       blocks.push({ type: "hr" });
     } else if (line.trim() !== "") {
@@ -439,21 +453,61 @@ function isTableRow(line: string): boolean {
   return line.includes("|") && line.trim().startsWith("|") && line.trim().endsWith("|");
 }
 
+/** Count leading spaces / tabs (tabs = 4 spaces) to determine nesting level */
+function indentLevel(line: string): number {
+  let spaces = 0;
+  for (const ch of line) {
+    if (ch === "\t") spaces += 4;
+    else if (ch === " ") spaces += 1;
+    else break;
+  }
+  return Math.floor(spaces / 4);
+}
+
 function parsePlainText(content: string): ContentBlock[] {
   const blocks: ContentBlock[] = [];
   const lines = content.split("\n");
   let i = 0;
 
   while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+    const level = indentLevel(rawLine);
 
+    // Skip completely blank lines
     if (!trimmed) {
       i++;
       continue;
     }
 
-    // Detect pipe-delimited table
+    // ── Markdown-style headings (common in .txt files) ──────────────────────
+    if (trimmed.startsWith("### ")) {
+      blocks.push({ type: "heading3", text: trimmed.slice(4).trim() });
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      blocks.push({ type: "heading2", text: trimmed.slice(3).trim() });
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith("# ")) {
+      blocks.push({ type: "heading1", text: trimmed.slice(2).trim() });
+      i++;
+      continue;
+    }
+
+    // ── Underline-style headings (=== or ---) ────────────────────────────────
+    const nextRaw = lines[i + 1] ?? "";
+    const nextTrimmed = nextRaw.trim();
+    if (nextTrimmed && /^[=\-]+$/.test(nextTrimmed) && nextTrimmed.length >= trimmed.length - 2) {
+      const headType = nextTrimmed[0] === "=" ? "heading1" : "heading2";
+      blocks.push({ type: headType, text: trimmed });
+      i += 2;
+      continue;
+    }
+
+    // ── Pipe-delimited table ──────────────────────────────────────────────────
     if (isTableRow(trimmed)) {
       const tableRows: string[][] = [];
       while (i < lines.length && isTableRow(lines[i].trim())) {
@@ -462,53 +516,47 @@ function parsePlainText(content: string): ContentBlock[] {
           .split("|")
           .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1)
           .map((p) => p.trim());
-
-        // Skip separator rows like |---|---|
         if (!row.every((p) => /^[-:\s]+$/.test(p))) {
           tableRows.push(row);
         }
         i++;
       }
-      if (tableRows.length > 0) {
-        blocks.push({ type: "table", rows: tableRows });
-      }
+      if (tableRows.length > 0) blocks.push({ type: "table", rows: tableRows });
       continue;
     }
 
-    // Numbered list
-    if (/^\d+\.\s/.test(trimmed)) {
-      blocks.push({ type: "numbered", text: trimmed.replace(/^\d+\.\s/, "").trim() });
+    // ── Numbered list: "1." / "1)" / "(1)" ───────────────────────────────────
+    const numberedMatch = trimmed.match(/^(?:\(?\d+[.)]\)?\s+)(.*)/);
+    if (numberedMatch) {
+      const text = numberedMatch[1].trim();
+      blocks.push({ type: "numbered", text, level, segments: parseInlineMarkdown(text) });
       i++;
       continue;
     }
 
-    // Bullet list
-    if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
-      blocks.push({ type: "bullet", text: trimmed.slice(2).trim() });
+    // ── Bullet list: "-", "*", "•", "+", "–", "▪", "○" ─────────────────────
+    const bulletMatch = trimmed.match(/^(?:[-*•+–▪○]\s+)(.*)/);
+    if (bulletMatch) {
+      const text = bulletMatch[1].trim();
+      blocks.push({ type: "bullet", text, level, segments: parseInlineMarkdown(text) });
       i++;
       continue;
     }
 
-    // Detect heading: ALL CAPS short line, or line followed by underline
-    const nextLine = lines[i + 1]?.trim() ?? "";
-    if (nextLine && /^[=\-]+$/.test(nextLine) && nextLine.length >= trimmed.length - 2) {
-      const level = nextLine.startsWith("=") ? 1 : 2;
-      blocks.push({ type: level === 1 ? "heading1" : "heading2", text: trimmed });
-      i += 2;
-      continue;
-    }
-
+    // ── ALL CAPS heading heuristic (short lines, all uppercase) ──────────────
     if (
-      /^[A-Z][A-Z\s\d:]+$/.test(trimmed) &&
-      trimmed.length < 80 &&
-      trimmed.length > 3
+      level === 0 &&
+      /^[A-Z][A-Z0-9\s\-–:,./()]+$/.test(trimmed) &&
+      trimmed.length >= 4 &&
+      trimmed.length <= 80
     ) {
       blocks.push({ type: "heading2", text: trimmed });
       i++;
       continue;
     }
 
-    blocks.push({ type: "paragraph", text: trimmed });
+    // ── Regular paragraph ─────────────────────────────────────────────────────
+    blocks.push({ type: "paragraph", text: trimmed, segments: parseInlineMarkdown(trimmed) });
     i++;
   }
 
@@ -520,6 +568,37 @@ async function parseHtml(content: string): Promise<ContentBlock[]> {
   const dom = new JSDOM(content);
   const doc = dom.window.document;
   const blocks: ContentBlock[] = [];
+
+  function processListNode(listEl: Element, ordered: boolean, depth: number): void {
+    // Only direct <li> children (not nested ones)
+    for (const child of Array.from(listEl.children)) {
+      if (child.tagName?.toLowerCase() !== "li") continue;
+      // Get text of this li, excluding nested list text
+      let text = "";
+      for (const node of Array.from(child.childNodes)) {
+        if (node.nodeType === 3 /* TEXT_NODE */) {
+          text += (node as Text).textContent ?? "";
+        } else if (node.nodeType === 1) {
+          const el = node as Element;
+          const tag = el.tagName?.toLowerCase();
+          if (tag !== "ul" && tag !== "ol") {
+            text += el.textContent ?? "";
+          }
+        }
+      }
+      text = text.trim();
+      if (text) {
+        blocks.push({ type: ordered ? "numbered" : "bullet", text, level: depth, segments: parseInlineMarkdown(text) });
+      }
+      // Recurse into nested lists
+      for (const nested of Array.from(child.children)) {
+        const nestedTag = nested.tagName?.toLowerCase();
+        if (nestedTag === "ul" || nestedTag === "ol") {
+          processListNode(nested, nestedTag === "ol", depth + 1);
+        }
+      }
+    }
+  }
 
   function processNode(node: Element): void {
     const tag = node.tagName?.toLowerCase();
@@ -535,11 +614,7 @@ async function parseHtml(content: string): Promise<ContentBlock[]> {
       if (text) blocks.push({ type: "paragraph", text });
     } else if (tag === "ul" || tag === "ol") {
       const ordered = tag === "ol";
-      node.querySelectorAll("li").forEach((li) => {
-        const text = li.textContent?.trim() ?? "";
-        if (text)
-          blocks.push({ type: ordered ? "numbered" : "bullet", text });
-      });
+      processListNode(node, ordered, 0);
     } else if (tag === "table") {
       const rows: string[][] = [];
       node.querySelectorAll("tr").forEach((tr) => {
@@ -813,8 +888,9 @@ async function parsePdf(filePath: string): Promise<ContentBlock[]> {
 
 async function parseDocx(filePath: string): Promise<ContentBlock[]> {
   const mammoth = await import("mammoth");
-  const result = await mammoth.extractRawText({ path: filePath });
-  return parsePlainText(result.value);
+  // Use HTML conversion to preserve headings, lists, tables, bold/italic
+  const result = await mammoth.convertToHtml({ path: filePath });
+  return parseHtml(result.value);
 }
 
 export async function convertFile(
