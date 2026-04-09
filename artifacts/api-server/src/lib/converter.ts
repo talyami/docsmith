@@ -12,9 +12,8 @@ import {
   WidthType,
   BorderStyle,
   AlignmentType,
-  PageOrientation,
-  SectionType,
   convertMillimetersToTwip,
+  TableOfContents,
 } from "docx";
 
 export type ProcessingMode =
@@ -30,9 +29,15 @@ export interface ConversionResult {
   docxBuffer: Buffer;
 }
 
+interface TextSegment {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  code?: boolean;
+}
+
 interface ContentBlock {
   type:
-    | "title"
     | "heading1"
     | "heading2"
     | "heading3"
@@ -43,8 +48,8 @@ interface ContentBlock {
     | "code"
     | "hr";
   text?: string;
+  segments?: TextSegment[];
   rows?: string[][];
-  ordered?: boolean;
 }
 
 function getProcessingMode(ext: string): ProcessingMode {
@@ -73,54 +78,105 @@ function getProcessingMode(ext: string): ProcessingMode {
   }
 }
 
-function makeTitle(text: string): Paragraph {
-  return new Paragraph({
-    text,
-    heading: HeadingLevel.TITLE,
-    spacing: { after: 300 },
-    alignment: AlignmentType.LEFT,
-  });
+// Parse inline markdown: **bold**, *italic*, `code`, combinations
+function parseInlineMarkdown(text: string): TextSegment[] {
+  const segments: TextSegment[] = [];
+  // Combined regex for **bold**, *italic*, `code`
+  const pattern = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    // Push preceding plain text
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index) });
+    }
+
+    if (match[2]) {
+      // ***bold+italic***
+      segments.push({ text: match[2], bold: true, italic: true });
+    } else if (match[3]) {
+      // **bold**
+      segments.push({ text: match[3], bold: true });
+    } else if (match[4]) {
+      // *italic*
+      segments.push({ text: match[4], italic: true });
+    } else if (match[5]) {
+      // `code`
+      segments.push({ text: match[5], code: true });
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Remaining text
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex) });
+  }
+
+  return segments.length > 0 ? segments : [{ text }];
+}
+
+function segmentsToRuns(segments: TextSegment[]): TextRun[] {
+  return segments.map(
+    (seg) =>
+      new TextRun({
+        text: seg.text,
+        bold: seg.bold,
+        italics: seg.italic,
+        font: seg.code ? "Courier New" : "Calibri",
+        size: seg.code ? 20 : 22,
+        color: seg.code ? "555555" : undefined,
+      })
+  );
 }
 
 function makeHeading(text: string, level: 1 | 2 | 3): Paragraph {
-  const map = {
+  const headingMap = {
     1: HeadingLevel.HEADING_1,
     2: HeadingLevel.HEADING_2,
     3: HeadingLevel.HEADING_3,
   } as const;
   return new Paragraph({
-    text,
-    heading: map[level],
-    spacing: { before: 240, after: 120 },
+    children: [new TextRun({ text, bold: true })],
+    heading: headingMap[level],
+    spacing: { before: 280, after: 140 },
   });
 }
 
-function makeParagraph(text: string): Paragraph {
+function makeParagraph(text: string, segments?: TextSegment[]): Paragraph {
+  const runs = segments ? segmentsToRuns(segments) : [new TextRun({ text: text ?? "", size: 22 })];
   return new Paragraph({
-    children: [new TextRun({ text, size: 22 })],
+    children: runs,
     spacing: { after: 120 },
   });
 }
 
-function makeBullet(text: string): Paragraph {
+function makeBullet(text: string, segments?: TextSegment[]): Paragraph {
+  const runs = segments ? segmentsToRuns(segments) : [new TextRun({ text: text ?? "", size: 22 })];
   return new Paragraph({
-    text,
+    children: runs,
     bullet: { level: 0 },
     spacing: { after: 80 },
   });
 }
 
-function makeNumbered(text: string, num: number): Paragraph {
+function makeNumbered(text: string, num: number, segments?: TextSegment[]): Paragraph {
+  const prefixRun = new TextRun({ text: `${num}. `, size: 22 });
+  const contentRuns = segments ? segmentsToRuns(segments) : [new TextRun({ text: text ?? "", size: 22 })];
   return new Paragraph({
-    children: [new TextRun({ text: `${num}. ${text}`, size: 22 })],
+    children: [prefixRun, ...contentRuns],
     spacing: { after: 80 },
   });
 }
 
 function makeHr(): Paragraph {
   return new Paragraph({
-    children: [new TextRun({ text: "─".repeat(60), size: 18, color: "AAAAAA" })],
-    spacing: { before: 120, after: 120 },
+    children: [new TextRun({ text: "", size: 4 })],
+    border: {
+      bottom: { style: BorderStyle.SINGLE, size: 6, color: "DDDDDD" },
+    },
+    spacing: { before: 160, after: 160 },
   });
 }
 
@@ -135,7 +191,7 @@ function makeTable(rows: string[][]): Table {
             new Paragraph({
               children: [
                 new TextRun({
-                  text: cell,
+                  text: cell.trim(),
                   size: 20,
                   bold: rowIndex === 0,
                 }),
@@ -149,8 +205,8 @@ function makeTable(rows: string[][]): Table {
             left: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
             right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
           },
-          shading: rowIndex === 0 ? { fill: "F2F2F2" } : undefined,
-          width: { size: Math.floor(9000 / row.length), type: WidthType.DXA },
+          shading: rowIndex === 0 ? { fill: "EEF2F7" } : undefined,
+          width: { size: Math.floor(9000 / Math.max(row.length, 1)), type: WidthType.DXA },
         });
       }),
     });
@@ -174,9 +230,6 @@ function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
     }
 
     switch (block.type) {
-      case "title":
-        children.push(makeTitle(block.text ?? ""));
-        break;
       case "heading1":
         children.push(makeHeading(block.text ?? "", 1));
         break;
@@ -187,14 +240,24 @@ function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
         children.push(makeHeading(block.text ?? "", 3));
         break;
       case "paragraph":
+        children.push(makeParagraph(block.text ?? "", block.segments));
+        break;
       case "code":
-        children.push(makeParagraph(block.text ?? ""));
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({ text: block.text ?? "", font: "Courier New", size: 20, color: "444444" }),
+            ],
+            spacing: { after: 80, before: 80 },
+            indent: { left: 720 },
+          })
+        );
         break;
       case "bullet":
-        children.push(makeBullet(block.text ?? ""));
+        children.push(makeBullet(block.text ?? "", block.segments));
         break;
       case "numbered":
-        children.push(makeNumbered(block.text ?? "", numberedCount));
+        children.push(makeNumbered(block.text ?? "", numberedCount, block.segments));
         break;
       case "table":
         if (block.rows && block.rows.length > 0) {
@@ -211,26 +274,16 @@ function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
   return children;
 }
 
-function buildDocx(
-  title: string,
-  blocks: ContentBlock[],
-  subtitle?: string
-): Promise<Buffer> {
-  const children: (Paragraph | Table)[] = [];
+function buildDocx(blocks: ContentBlock[]): Promise<Buffer> {
+  const toc = new TableOfContents("Table of Contents", {
+    hyperlink: true,
+    headingStyleRange: "1-3",
+  });
 
-  children.push(makeTitle(title));
-  if (subtitle) {
-    children.push(
-      new Paragraph({
-        children: [new TextRun({ text: subtitle, size: 20, color: "888888" })],
-        spacing: { after: 400 },
-      })
-    );
-  }
-  children.push(makeHr());
-  children.push(...blocksToDocxChildren(blocks));
+  const bodyChildren = blocksToDocxChildren(blocks);
 
   const doc = new Document({
+    features: { updateFields: true },
     sections: [
       {
         properties: {
@@ -243,7 +296,7 @@ function buildDocx(
             },
           },
         },
-        children,
+        children: [toc, makeHr(), ...bodyChildren],
       },
     ],
     styles: {
@@ -261,6 +314,9 @@ function buildDocx(
             bold: true,
             color: "1a1a2e",
           },
+          paragraph: {
+            spacing: { before: 320, after: 160 },
+          },
         },
         heading2: {
           run: {
@@ -268,6 +324,9 @@ function buildDocx(
             size: 26,
             bold: true,
             color: "16213e",
+          },
+          paragraph: {
+            spacing: { before: 240, after: 120 },
           },
         },
         heading3: {
@@ -277,13 +336,8 @@ function buildDocx(
             bold: true,
             color: "0f3460",
           },
-        },
-        title: {
-          run: {
-            font: "Calibri",
-            size: 48,
-            bold: true,
-            color: "1a1a2e",
+          paragraph: {
+            spacing: { before: 200, after: 80 },
           },
         },
       },
@@ -304,7 +358,7 @@ async function parseMarkdown(content: string): Promise<ContentBlock[]> {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    if (line.startsWith("```")) {
+    if (line.trim().startsWith("```")) {
       if (inCodeBlock) {
         if (codeLines.length > 0) {
           blocks.push({ type: "code", text: codeLines.join("\n") });
@@ -322,6 +376,7 @@ async function parseMarkdown(content: string): Promise<ContentBlock[]> {
       continue;
     }
 
+    // Markdown tables
     if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
       const parts = line
         .trim()
@@ -329,7 +384,8 @@ async function parseMarkdown(content: string): Promise<ContentBlock[]> {
         .filter((_, i, arr) => i > 0 && i < arr.length - 1)
         .map((p) => p.trim());
 
-      if (parts.every((p) => p.match(/^[-:]+$/))) {
+      // Separator row like |---|---|
+      if (parts.every((p) => /^[-:\s]+$/.test(p))) {
         continue;
       }
 
@@ -353,48 +409,107 @@ async function parseMarkdown(content: string): Promise<ContentBlock[]> {
       blocks.push({ type: "heading2", text: line.slice(3).trim() });
     } else if (line.startsWith("### ")) {
       blocks.push({ type: "heading3", text: line.slice(4).trim() });
+    } else if (line.startsWith("#### ") || line.startsWith("##### ")) {
+      blocks.push({ type: "heading3", text: line.replace(/^#+\s/, "").trim() });
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
-      blocks.push({ type: "bullet", text: line.slice(2).trim() });
+      const text = line.slice(2).trim();
+      blocks.push({ type: "bullet", text, segments: parseInlineMarkdown(text) });
     } else if (/^\d+\.\s/.test(line)) {
-      blocks.push({ type: "numbered", text: line.replace(/^\d+\.\s/, "").trim() });
-    } else if (line.trim() === "---" || line.trim() === "***") {
+      const text = line.replace(/^\d+\.\s/, "").trim();
+      blocks.push({ type: "numbered", text, segments: parseInlineMarkdown(text) });
+    } else if (line.trim() === "---" || line.trim() === "***" || line.trim() === "___") {
       blocks.push({ type: "hr" });
     } else if (line.trim() !== "") {
-      blocks.push({ type: "paragraph", text: line.trim() });
+      const text = line.trim();
+      blocks.push({ type: "paragraph", text, segments: parseInlineMarkdown(text) });
     }
   }
 
   if (inTable && tableRows.length > 0) {
     blocks.push({ type: "table", rows: tableRows });
   }
+  if (inCodeBlock && codeLines.length > 0) {
+    blocks.push({ type: "code", text: codeLines.join("\n") });
+  }
 
   return blocks;
+}
+
+function isTableRow(line: string): boolean {
+  return line.includes("|") && line.trim().startsWith("|") && line.trim().endsWith("|");
 }
 
 function parsePlainText(content: string): ContentBlock[] {
   const blocks: ContentBlock[] = [];
   const lines = content.split("\n");
-  let titleFound = false;
+  let i = 0;
 
-  for (const line of lines) {
+  while (i < lines.length) {
+    const line = lines[i];
     const trimmed = line.trim();
-    if (!trimmed) continue;
 
-    if (!titleFound && /^[A-Z][A-Z\s]+$/.test(trimmed) && trimmed.length < 80) {
-      blocks.push({ type: "heading1", text: trimmed });
-      titleFound = true;
+    if (!trimmed) {
+      i++;
       continue;
     }
 
+    // Detect pipe-delimited table
+    if (isTableRow(trimmed)) {
+      const tableRows: string[][] = [];
+      while (i < lines.length && isTableRow(lines[i].trim())) {
+        const row = lines[i]
+          .trim()
+          .split("|")
+          .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1)
+          .map((p) => p.trim());
+
+        // Skip separator rows like |---|---|
+        if (!row.every((p) => /^[-:\s]+$/.test(p))) {
+          tableRows.push(row);
+        }
+        i++;
+      }
+      if (tableRows.length > 0) {
+        blocks.push({ type: "table", rows: tableRows });
+      }
+      continue;
+    }
+
+    // Numbered list
     if (/^\d+\.\s/.test(trimmed)) {
       blocks.push({ type: "numbered", text: trimmed.replace(/^\d+\.\s/, "").trim() });
-    } else if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
-      blocks.push({ type: "bullet", text: trimmed.slice(2).trim() });
-    } else if (/^[A-Z][^a-z]*:?$/.test(trimmed) && trimmed.length < 60) {
-      blocks.push({ type: "heading2", text: trimmed });
-    } else {
-      blocks.push({ type: "paragraph", text: trimmed });
+      i++;
+      continue;
     }
+
+    // Bullet list
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
+      blocks.push({ type: "bullet", text: trimmed.slice(2).trim() });
+      i++;
+      continue;
+    }
+
+    // Detect heading: ALL CAPS short line, or line followed by underline
+    const nextLine = lines[i + 1]?.trim() ?? "";
+    if (nextLine && /^[=\-]+$/.test(nextLine) && nextLine.length >= trimmed.length - 2) {
+      const level = nextLine.startsWith("=") ? 1 : 2;
+      blocks.push({ type: level === 1 ? "heading1" : "heading2", text: trimmed });
+      i += 2;
+      continue;
+    }
+
+    if (
+      /^[A-Z][A-Z\s\d:]+$/.test(trimmed) &&
+      trimmed.length < 80 &&
+      trimmed.length > 3
+    ) {
+      blocks.push({ type: "heading2", text: trimmed });
+      i++;
+      continue;
+    }
+
+    blocks.push({ type: "paragraph", text: trimmed });
+    i++;
   }
 
   return blocks;
@@ -477,7 +592,8 @@ async function parseJson(content: string): Promise<ContentBlock[]> {
     if (value === null || value === undefined) {
       blocks.push({ type: "bullet", text: `${key}: (empty)` });
     } else if (Array.isArray(value)) {
-      if (depth === 0) blocks.push({ type: "heading2", text: key });
+      if (depth === 0) blocks.push({ type: "heading1", text: key });
+      else if (depth === 1) blocks.push({ type: "heading2", text: key });
       else blocks.push({ type: "heading3", text: key });
 
       if (value.length > 0 && typeof value[0] === "object" && value[0] !== null) {
@@ -495,7 +611,8 @@ async function parseJson(content: string): Promise<ContentBlock[]> {
         }
       }
     } else if (typeof value === "object") {
-      if (depth === 0) blocks.push({ type: "heading2", text: key });
+      if (depth === 0) blocks.push({ type: "heading1", text: key });
+      else if (depth === 1) blocks.push({ type: "heading2", text: key });
       else blocks.push({ type: "heading3", text: key });
 
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -534,7 +651,8 @@ async function parseYaml(content: string): Promise<ContentBlock[]> {
     if (value === null || value === undefined) {
       blocks.push({ type: "bullet", text: `${key}: (null)` });
     } else if (Array.isArray(value)) {
-      if (depth === 0) blocks.push({ type: "heading2", text: key });
+      if (depth === 0) blocks.push({ type: "heading1", text: key });
+      else if (depth === 1) blocks.push({ type: "heading2", text: key });
       else blocks.push({ type: "heading3", text: key });
 
       for (const item of value) {
@@ -548,7 +666,8 @@ async function parseYaml(content: string): Promise<ContentBlock[]> {
         }
       }
     } else if (typeof value === "object") {
-      if (depth === 0) blocks.push({ type: "heading2", text: key });
+      if (depth === 0) blocks.push({ type: "heading1", text: key });
+      else if (depth === 1) blocks.push({ type: "heading2", text: key });
       else blocks.push({ type: "heading3", text: key });
 
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -584,7 +703,8 @@ async function parseXml(content: string): Promise<ContentBlock[]> {
     if (children.length === 0) {
       if (text) blocks.push({ type: "bullet", text: `${tag}: ${text}` });
     } else {
-      if (depth === 0) blocks.push({ type: "heading2", text: tag });
+      if (depth === 0) blocks.push({ type: "heading1", text: tag });
+      else if (depth === 1) blocks.push({ type: "heading2", text: tag });
       else blocks.push({ type: "heading3", text: tag });
 
       for (const child of children) {
@@ -595,7 +715,6 @@ async function parseXml(content: string): Promise<ContentBlock[]> {
 
   const root = doc.documentElement;
   if (root) {
-    blocks.push({ type: "heading1", text: root.tagName });
     for (const child of Array.from(root.children)) {
       processNode(child as Element, 0);
     }
@@ -682,7 +801,11 @@ async function parseRst(content: string): Promise<ContentBlock[]> {
 }
 
 async function parsePdf(filePath: string): Promise<ContentBlock[]> {
-  const pdfParse = (await import("pdf-parse")).default;
+  const pdfParseModule = await import("pdf-parse");
+  // Handle both ESM default and CJS module.exports patterns
+  const pdfParse: (buf: Buffer) => Promise<{ text: string }> =
+    (pdfParseModule as unknown as { default: (buf: Buffer) => Promise<{ text: string }> }).default ??
+    (pdfParseModule as unknown as (buf: Buffer) => Promise<{ text: string }>);
   const buffer = await fs.readFile(filePath);
   const data = await pdfParse(buffer);
   return parsePlainText(data.text);
@@ -700,75 +823,62 @@ export async function convertFile(
   ext: string
 ): Promise<ConversionResult> {
   const mode = getProcessingMode(ext);
-  const baseName = path.basename(originalFilename, ext);
   let blocks: ContentBlock[] = [];
-  let subtitle: string | undefined;
 
   switch (ext) {
     case ".md": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseMarkdown(content);
-      subtitle = "Converted from Markdown";
       break;
     }
     case ".txt": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = parsePlainText(content);
-      subtitle = "Converted from Plain Text";
       break;
     }
     case ".html": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseHtml(content);
-      subtitle = "Converted from HTML";
       break;
     }
     case ".csv": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseCsv(content);
-      subtitle = "Converted from CSV";
       break;
     }
     case ".json": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseJson(content);
-      subtitle = "Converted from JSON";
       break;
     }
     case ".yaml":
     case ".yml": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseYaml(content);
-      subtitle = "Converted from YAML";
       break;
     }
     case ".xml": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseXml(content);
-      subtitle = "Converted from XML";
       break;
     }
     case ".tex": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseTex(content);
-      subtitle = "Converted from LaTeX";
       break;
     }
     case ".rst": {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = await parseRst(content);
-      subtitle = "Converted from reStructuredText";
       break;
     }
     case ".pdf": {
       blocks = await parsePdf(filePath);
-      subtitle = "Converted from PDF";
       break;
     }
     case ".docx":
     case ".doc": {
       blocks = await parseDocx(filePath);
-      subtitle = `Converted from ${ext.toUpperCase()}`;
       break;
     }
     case ".rtf": {
@@ -779,17 +889,15 @@ export async function convertFile(
         .replace(/[{}]/g, "")
         .trim();
       blocks = parsePlainText(plainText);
-      subtitle = "Converted from RTF";
       break;
     }
     default: {
       const content = await fs.readFile(filePath, "utf-8");
       blocks = parsePlainText(content);
-      subtitle = "Converted from text file";
     }
   }
 
-  const docxBuffer = await buildDocx(baseName, blocks, subtitle);
+  const docxBuffer = await buildDocx(blocks);
 
   return { mode, docxBuffer };
 }
