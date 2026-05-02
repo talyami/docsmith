@@ -26,15 +26,15 @@ import type { Conversion } from "@workspace/api-client-react/src/generated/api.s
 
 function StatusBadge({ status }: { status: Conversion["status"] }) {
   if (status === "done") {
-    return <span className="flex items-center text-xs font-medium text-green-600 bg-green-500/10 px-2 py-1 rounded-full"><CheckCircle2 className="mr-1 h-3 w-3" /> Done</span>;
+    return <span className="flex items-center text-xs font-medium text-green-600 bg-green-500/10 px-2 py-1 rounded-full whitespace-nowrap"><CheckCircle2 className="mr-1 h-3 w-3" /> Done</span>;
   }
   if (status === "error") {
-    return <span className="flex items-center text-xs font-medium text-destructive bg-destructive/10 px-2 py-1 rounded-full"><AlertCircle className="mr-1 h-3 w-3" /> Error</span>;
+    return <span className="flex items-center text-xs font-medium text-destructive bg-destructive/10 px-2 py-1 rounded-full whitespace-nowrap"><AlertCircle className="mr-1 h-3 w-3" /> Error</span>;
   }
   if (status === "processing") {
-    return <span className="flex items-center text-xs font-medium text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full"><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Processing</span>;
+    return <span className="flex items-center text-xs font-medium text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full whitespace-nowrap"><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Processing</span>;
   }
-  return <span className="flex items-center text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Pending</span>;
+  return <span className="flex items-center text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full whitespace-nowrap">Pending</span>;
 }
 
 export function History() {
@@ -67,14 +67,14 @@ export function History() {
   );
 
   return (
-    <div className="max-w-6xl mx-auto p-8 space-y-8 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Conversion History</h1>
-          <p className="text-muted-foreground mt-1">Review and manage your past document transformations.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">Conversion History</h1>
+          <p className="text-muted-foreground mt-1 text-sm sm:text-base">Review and manage your past document transformations.</p>
         </div>
         
-        <div className="relative w-full md:w-64">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             type="text"
@@ -93,70 +93,89 @@ export function History() {
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
         ) : filteredConversions?.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground">
-            <FileText className="h-12 w-12 mx-auto mb-4 opacity-20" />
-            <h3 className="text-lg font-medium text-foreground mb-1">No conversions found</h3>
-            <p>You haven't converted any files yet, or none match your search.</p>
+          <div className="p-8 sm:p-12 text-center text-muted-foreground">
+            <FileText className="h-10 w-10 sm:h-12 sm:w-12 mx-auto mb-4 opacity-20" />
+            <h3 className="text-base sm:text-lg font-medium text-foreground mb-1">No conversions found</h3>
+            <p className="text-sm">You haven't converted any files yet, or none match your search.</p>
           </div>
         ) : (
           <div className="divide-y divide-border">
             {filteredConversions?.map((conv) => (
-              <div key={conv.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-muted/50 transition-colors" data-testid={`history-item-${conv.id}`}>
-                <div className="flex items-start gap-4">
-                  <div className="mt-1 p-2 bg-primary/10 text-primary rounded-md hidden sm:block">
-                    <FileText className="h-5 w-5" />
+              <div
+                key={conv.id}
+                className="p-3 sm:p-4 hover:bg-muted/50 transition-colors"
+                data-testid={`history-item-${conv.id}`}
+              >
+                {/* Top row: icon + name + actions */}
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 p-1.5 sm:p-2 bg-primary/10 text-primary rounded-md shrink-0 hidden sm:block">
+                    <FileText className="h-4 w-4 sm:h-5 sm:w-5" />
                   </div>
-                  <div>
-                    <h4 className="font-medium text-foreground truncate max-w-sm md:max-w-md lg:max-w-lg" title={conv.originalFilename}>
-                      {conv.originalFilename}
-                    </h4>
-                    <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-                      <span className="uppercase">{conv.originalExtension.replace('.', '')}</span>
-                      <span>&bull;</span>
-                      <span>{(conv.fileSize / 1024).toFixed(1)} KB</span>
-                      <span>&bull;</span>
-                      <span>{format(new Date(conv.createdAt), "MMM d, yyyy 'at' h:mm a")}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <h4 className="font-medium text-foreground text-sm truncate" title={conv.originalFilename}>
+                        {conv.originalFilename}
+                      </h4>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <StatusBadge status={conv.status} />
+                      </div>
                     </div>
-                    {conv.status === 'error' && conv.errorMessage && (
-                      <p className="text-xs text-destructive mt-2 max-w-xl truncate">{conv.errorMessage}</p>
-                    )}
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={conv.status} />
-                  
-                  <div className="flex items-center gap-2 border-l border-border pl-3 ml-1">
-                    {conv.status === "done" && conv.downloadPath && (
-                      <Button variant="outline" size="sm" asChild>
-                        <a href={conv.downloadPath} download data-testid={`button-download-${conv.id}`}>
-                          <Download className="h-4 w-4 mr-2" />
-                          Download
-                        </a>
-                      </Button>
+                    {/* Meta row */}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-xs text-muted-foreground">
+                      <span className="uppercase font-medium">{conv.originalExtension.replace('.', '')}</span>
+                      <span className="hidden sm:inline">&bull;</span>
+                      <span>{(conv.fileSize / 1024).toFixed(1)} KB</span>
+                      <span className="hidden sm:inline">&bull;</span>
+                      <span className="hidden sm:inline">{format(new Date(conv.createdAt), "MMM d, yyyy 'at' h:mm a")}</span>
+                      <span className="sm:hidden">{format(new Date(conv.createdAt), "MMM d, yy")}</span>
+                    </div>
+
+                    {conv.status === 'error' && conv.errorMessage && (
+                      <p className="text-xs text-destructive mt-1.5 truncate">{conv.errorMessage}</p>
                     )}
-                    
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" data-testid={`button-delete-${conv.id}`}>
-                          <Trash2 className="h-4 w-4" />
+
+                    {/* Action buttons below on mobile */}
+                    <div className="flex items-center gap-2 mt-2">
+                      {conv.status === "done" && conv.downloadPath && (
+                        <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1.5">
+                          <a href={conv.downloadPath} download data-testid={`button-download-${conv.id}`}>
+                            <Download className="h-3 w-3" />
+                            Download
+                          </a>
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Conversion?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will permanently delete the conversion record and the output file from our servers. This action cannot be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => handleDelete(conv.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      )}
+                      
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            data-testid={`button-delete-${conv.id}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent className="max-w-[90vw] sm:max-w-md rounded-xl">
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Conversion?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will permanently delete the conversion record and the output file. This action cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter className="flex-row gap-2 sm:flex-row">
+                            <AlertDialogCancel className="flex-1 sm:flex-none mt-0">Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDelete(conv.id)}
+                              className="flex-1 sm:flex-none bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </div>
                 </div>
               </div>
