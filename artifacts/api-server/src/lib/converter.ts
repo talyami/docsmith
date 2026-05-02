@@ -1028,6 +1028,242 @@ async function extractRawText(filePath: string, ext: string): Promise<string> {
   return await fs.readFile(filePath, "utf-8");
 }
 
+async function parseRtf(filePath: string): Promise<ContentBlock[]> {
+  const content = await fs.readFile(filePath, "utf-8");
+
+  // Dynamically import @iarna/rtf-to-html — typed via src/types/iarna__rtf-to-html.d.ts
+  const rtfToHtmlModule = await import("@iarna/rtf-to-html");
+  const { fromString } = rtfToHtmlModule;
+  if (typeof fromString !== "function") {
+    throw new Error(
+      "@iarna/rtf-to-html: fromString is not a function — module shape may have changed"
+    );
+  }
+
+  // Convert RTF → HTML (promisified)
+  const html = await new Promise<string>((resolve, reject) => {
+    fromString(content, null, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+
+  // Parse the HTML with jsdom, mapping RTF structure to ContentBlocks.
+  // @iarna/rtf-to-html emits <p> tags with inline CSS (font-size, bold via <strong>, italic via <em>).
+  // We use font-size heuristics to detect headings and detect list patterns from text.
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM(html);
+  const body = dom.window.document.body;
+  const blocks: ContentBlock[] = [];
+
+  function getFontSize(el: Element): number | null {
+    const style = el.getAttribute("style") ?? "";
+    const match = style.match(/font-size:\s*([\d.]+)pt/);
+    return match ? parseFloat(match[1]) : null;
+  }
+
+  function extractSegments(el: Element): TextSegment[] {
+    const raw: TextSegment[] = [];
+
+    function walk(node: Node, bold: boolean, italic: boolean): void {
+      if (node.nodeType === 3 /* TEXT_NODE */) {
+        const text = (node as Text).textContent ?? "";
+        if (text) raw.push({ text, ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) });
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      const elem = node as Element;
+      const tag = elem.tagName?.toLowerCase();
+      const nextBold = bold || tag === "strong" || tag === "b";
+      const nextItalic = italic || tag === "em" || tag === "i";
+      for (const child of Array.from(elem.childNodes)) {
+        walk(child, nextBold, nextItalic);
+      }
+    }
+
+    for (const child of Array.from(el.childNodes)) {
+      walk(child, false, false);
+    }
+
+    // Merge adjacent segments with the same style
+    const merged: TextSegment[] = [];
+    for (const seg of raw) {
+      const prev = merged[merged.length - 1];
+      if (prev && !!prev.bold === !!seg.bold && !!prev.italic === !!seg.italic) {
+        prev.text += seg.text;
+      } else {
+        merged.push({ ...seg });
+      }
+    }
+    return merged;
+  }
+
+  function headingTypeFromFontSize(pt: number): "heading1" | "heading2" | "heading3" | null {
+    if (pt >= 20) return "heading1";
+    if (pt >= 16) return "heading2";
+    if (pt >= 14) return "heading3";
+    return null;
+  }
+
+  function processListNode(listEl: Element, ordered: boolean, depth: number): void {
+    for (const child of Array.from(listEl.children)) {
+      if (child.tagName?.toLowerCase() !== "li") continue;
+
+      // Collect text AND segments in one pass over direct children,
+      // skipping nested ul/ol so that nested list text is not included.
+      const rawSegments: TextSegment[] = [];
+
+      function walkLiNode(node: Node, bold: boolean, italic: boolean): void {
+        if (node.nodeType === 3 /* TEXT_NODE */) {
+          const t = (node as Text).textContent ?? "";
+          if (t) rawSegments.push({ text: t, ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) });
+          return;
+        }
+        if (node.nodeType !== 1) return;
+        const elem = node as Element;
+        const tag = elem.tagName?.toLowerCase();
+        // Skip nested lists entirely — they are processed recursively below
+        if (tag === "ul" || tag === "ol") return;
+        const nextBold = bold || tag === "strong" || tag === "b";
+        const nextItalic = italic || tag === "em" || tag === "i";
+        for (const n of Array.from(elem.childNodes)) {
+          walkLiNode(n, nextBold, nextItalic);
+        }
+      }
+
+      for (const node of Array.from(child.childNodes)) {
+        walkLiNode(node, false, false);
+      }
+
+      // Merge adjacent segments with the same style
+      const segments: TextSegment[] = [];
+      for (const seg of rawSegments) {
+        const prev = segments[segments.length - 1];
+        if (prev && !!prev.bold === !!seg.bold && !!prev.italic === !!seg.italic) {
+          prev.text += seg.text;
+        } else {
+          segments.push({ ...seg });
+        }
+      }
+
+      const text = segments.map((s) => s.text).join("").trim();
+      if (text) {
+        const hasFormatting = segments.some((s) => s.bold || s.italic);
+        blocks.push({
+          type: ordered ? "numbered" : "bullet",
+          text,
+          level: depth,
+          ...(hasFormatting ? { segments } : {}),
+        });
+      }
+
+      // Recurse into nested lists
+      for (const nested of Array.from(child.children)) {
+        const t = nested.tagName?.toLowerCase();
+        if (t === "ul" || t === "ol") {
+          processListNode(nested, t === "ol", depth + 1);
+        }
+      }
+    }
+  }
+
+  function processElement(el: Element): void {
+    const tag = el.tagName?.toLowerCase();
+
+    // Native heading tags (defensive — rtf-to-html doesn't emit these, but handle anyway)
+    if (tag === "h1") { blocks.push({ type: "heading1", text: el.textContent?.trim() ?? "" }); return; }
+    if (tag === "h2") { blocks.push({ type: "heading2", text: el.textContent?.trim() ?? "" }); return; }
+    if (tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") {
+      blocks.push({ type: "heading3", text: el.textContent?.trim() ?? "" }); return;
+    }
+    if (tag === "hr") { blocks.push({ type: "hr" }); return; }
+
+    if (tag === "ul" || tag === "ol") {
+      processListNode(el, tag === "ol", 0);
+      return;
+    }
+
+    if (tag === "table") {
+      const rows: string[][] = [];
+      el.querySelectorAll("tr").forEach((tr) => {
+        const cells = Array.from(tr.querySelectorAll("th, td")).map((c) => c.textContent?.trim() ?? "");
+        if (cells.length > 0) rows.push(cells);
+      });
+      if (rows.length > 0) blocks.push({ type: "table", rows });
+      return;
+    }
+
+    if (tag === "p" || tag === "div") {
+      const rawText = el.textContent?.trim() ?? "";
+      if (!rawText) return;
+
+      // 1. Font-size-based heading detection
+      const fontSize = getFontSize(el);
+      if (fontSize !== null) {
+        const headingType = headingTypeFromFontSize(fontSize);
+        if (headingType) {
+          blocks.push({ type: headingType, text: rawText });
+          return;
+        }
+      }
+
+      // 2. Entirely-bold short runs → treat as heading3
+      const segments = extractSegments(el);
+      const allBold = segments.length > 0 && segments.every((s) => s.bold);
+      if (allBold && rawText.length < 120 && !rawText.includes("\n")) {
+        blocks.push({ type: "heading3", text: rawText });
+        return;
+      }
+
+      // 3. Bullet list patterns (common RTF bullet characters)
+      if (/^[•·◦▪▫‣⁃]\s+/.test(rawText) || /^[-*]\s{2,}/.test(rawText)) {
+        const text = rawText.replace(/^[•·◦▪▫‣⁃\-*]\s+/, "").trim();
+        blocks.push({ type: "bullet", text });
+        return;
+      }
+
+      // 4. Numbered list patterns
+      if (/^\d+[.)]\s+/.test(rawText)) {
+        const text = rawText.replace(/^\d+[.)]\s+/, "").trim();
+        blocks.push({ type: "numbered", text });
+        return;
+      }
+
+      // 5. Regular paragraph — preserve inline bold/italic if present
+      const hasInlineFormatting = segments.some((s) => s.bold || s.italic);
+      blocks.push({
+        type: "paragraph",
+        text: rawText,
+        ...(hasInlineFormatting ? { segments } : {}),
+      });
+      return;
+    }
+
+    // Container elements — recurse
+    for (const child of Array.from(el.children)) {
+      processElement(child);
+    }
+  }
+
+  if (body) {
+    for (const child of Array.from(body.children)) {
+      processElement(child);
+    }
+  }
+
+  // If nothing was extracted (malformed RTF), fall back to basic regex stripping
+  if (blocks.length === 0) {
+    const stripped = content
+      .replace(/\{\\[^}]*\}/g, "")
+      .replace(/\\[a-z]+\d*\s?/g, " ")
+      .replace(/[{}]/g, "")
+      .trim();
+    return parsePlainText(stripped);
+  }
+
+  return blocks;
+}
+
 export async function convertFile(
   filePath: string,
   originalFilename: string,
@@ -1102,13 +1338,7 @@ export async function convertFile(
       break;
     }
     case ".rtf": {
-      const content = await fs.readFile(filePath, "utf-8");
-      const plainText = content
-        .replace(/\{\\[^}]+\}/g, "")
-        .replace(/\\[a-z]+\d*\s?/g, " ")
-        .replace(/[{}]/g, "")
-        .trim();
-      blocks = parsePlainText(plainText);
+      blocks = await parseRtf(filePath);
       break;
     }
     default: {
