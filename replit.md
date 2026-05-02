@@ -26,7 +26,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
 
-## Application: Universal DOCX Converter (DocStudio)
+## Application: DocSmith (Universal DOCX Converter)
 
 ### Purpose
 A web app that converts any document format into a clean, professionally formatted `.docx` Word file.
@@ -68,3 +68,10 @@ A web app that converts any document format into a clean, professionally formatt
 - PDF → extract text → rebuild as docx
 - DOCX/DOC → extract text with mammoth → rebuild clean
 - TXT/RTF/TEX/RST → infer structure → rebuild
+
+### AI-Powered Mode (toggle on Home page)
+- When the user enables "AI parsing", uploaded files are first text-extracted (PDF via pdf-parse, DOCX via mammoth, others read as UTF-8)
+- The raw text is sent to OpenRouter (`openai/gpt-oss-120b:free`) which returns a structured `ContentBlock[]` JSON
+- DocSmith then renders that into a polished `.docx` using the same `buildDocx` pipeline
+- Requires `OPENROUTER_API_KEY` secret
+- Implemented in `artifacts/api-server/src/lib/ai-parser.ts`

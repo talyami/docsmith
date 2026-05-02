@@ -7,12 +7,13 @@ export function useFileUpload() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  const uploadFile = useCallback(async (file: File) => {
+  const uploadFile = useCallback(async (file: File, useAi = false) => {
     setIsUploading(true);
     setUploadError(null);
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("useAi", useAi ? "true" : "false");
 
     try {
       const response = await fetch("/api/convert", {

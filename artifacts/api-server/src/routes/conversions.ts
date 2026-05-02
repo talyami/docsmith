@@ -66,6 +66,7 @@ router.post("/convert", upload.single("file"), async (req, res): Promise<void> =
   const originalExt = path.extname(file.originalname).toLowerCase();
   const originalFilename = file.originalname;
   const fileSize = file.size;
+  const useAi = req.body?.useAi === "true" || req.body?.useAi === true;
 
   const [record] = await db
     .insert(conversionsTable)
@@ -74,6 +75,7 @@ router.post("/convert", upload.single("file"), async (req, res): Promise<void> =
       originalExtension: originalExt,
       fileSize,
       status: "processing",
+      useAi,
     })
     .returning();
 
@@ -81,7 +83,7 @@ router.post("/convert", upload.single("file"), async (req, res): Promise<void> =
 
   setImmediate(async () => {
     try {
-      const result = await convertFile(file.path, originalFilename, originalExt);
+      const result = await convertFile(file.path, originalFilename, originalExt, useAi);
       const outputFilename = `${record.id}-${path.basename(originalFilename, originalExt)}.docx`;
       const outputPath = path.join(OUTPUTS_DIR, outputFilename);
       await fs.writeFile(outputPath, result.docxBuffer);

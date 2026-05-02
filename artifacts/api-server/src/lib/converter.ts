@@ -17,6 +17,7 @@ import {
   TableOfContents,
   ShadingType,
 } from "docx";
+import { parseWithAi, type AiContentBlock } from "./ai-parser";
 
 export type ProcessingMode =
   | "preserve-and-clean"
@@ -987,13 +988,62 @@ async function parseDocx(filePath: string): Promise<ContentBlock[]> {
   return parseHtml(result.value);
 }
 
+async function extractRawText(filePath: string, ext: string): Promise<string> {
+  if (ext === ".pdf") {
+    const pdfParseModule = await import("pdf-parse");
+    const pdfParse: (buf: Buffer) => Promise<{ text: string }> =
+      (pdfParseModule as unknown as { default: (buf: Buffer) => Promise<{ text: string }> }).default ??
+      (pdfParseModule as unknown as (buf: Buffer) => Promise<{ text: string }>);
+    const buffer = await fs.readFile(filePath);
+    const data = await pdfParse(buffer);
+    return data.text;
+  }
+  if (ext === ".docx") {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ path: filePath });
+    return result.value;
+  }
+  if (ext === ".doc") {
+    // mammoth does NOT support legacy .doc binary format. Best-effort: pull
+    // printable ASCII / Latin-1 runs out of the binary blob.
+    const buffer = await fs.readFile(filePath);
+    const ascii = buffer.toString("latin1").replace(/[^\x20-\x7E\n\r\t]+/g, " ");
+    const collapsed = ascii.replace(/\s{3,}/g, "\n").trim();
+    if (collapsed.length < 40) {
+      throw new Error(
+        "Could not extract text from legacy .doc file. Please convert to .docx first or upload without AI mode.",
+      );
+    }
+    return collapsed;
+  }
+  if (ext === ".rtf") {
+    const content = await fs.readFile(filePath, "utf-8");
+    return content
+      .replace(/\{\\[^}]+\}/g, "")
+      .replace(/\\[a-z]+\d*\s?/g, " ")
+      .replace(/[{}]/g, "")
+      .trim();
+  }
+  // Plain-text-like formats: read directly
+  return await fs.readFile(filePath, "utf-8");
+}
+
 export async function convertFile(
   filePath: string,
   originalFilename: string,
-  ext: string
+  ext: string,
+  useAi = false,
 ): Promise<ConversionResult> {
-  const mode = getProcessingMode(ext);
+  const mode: ProcessingMode = useAi ? "parse-and-rebuild" : getProcessingMode(ext);
   let blocks: ContentBlock[] = [];
+
+  if (useAi) {
+    const rawText = await extractRawText(filePath, ext);
+    const aiBlocks = await parseWithAi(rawText, originalFilename);
+    blocks = aiBlocks as ContentBlock[];
+    const docxBuffer = await buildDocx(blocks);
+    return { mode, docxBuffer };
+  }
 
   switch (ext) {
     case ".md": {

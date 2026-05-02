@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { Conversion } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { Conversion } from "@workspace/api-client-react";
 
 function StatusBadge({ status }: { status: Conversion["status"] }) {
   if (status === "done") {

@@ -3,7 +3,7 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: Universal File-to-DOCX Converter API
+  description: DocSmith — AI-powered Universal File-to-DOCX Converter API
 servers:
   - url: /api
     description: Base API path
@@ -126,6 +126,8 @@ components:
           type: ["string", "null"]
         processingMode:
           type: ["string", "null"]
+        useAi:
+          type: boolean
         createdAt:
           type: string
           format: date-time
@@ -141,6 +143,7 @@ components:
         - errorMessage
         - downloadPath
         - processingMode
+        - useAi
         - createdAt
         - updatedAt
     ConversionStats:

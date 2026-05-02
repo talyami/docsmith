@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, timestamp, pgEnum, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -13,6 +13,7 @@ export const conversionsTable = pgTable("conversions", {
   errorMessage: text("error_message"),
   downloadPath: text("download_path"),
   processingMode: text("processing_mode"),
+  useAi: boolean("use_ai").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -25,7 +25,7 @@ export function Layout({ children }: LayoutProps) {
         <div className="h-16 flex items-center px-6 border-b border-border shrink-0">
           <div className="flex items-center gap-2 text-primary">
             <FileText className="h-6 w-6" />
-            <span className="font-bold text-lg tracking-tight">DocStudio</span>
+            <span className="font-bold text-lg tracking-tight">DocSmith</span>
           </div>
         </div>
 
@@ -74,7 +74,7 @@ export function Layout({ children }: LayoutProps) {
       <div className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-card border-b border-border flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-2 text-primary">
           <FileText className="h-5 w-5" />
-          <span className="font-bold text-base tracking-tight">DocStudio</span>
+          <span className="font-bold text-base tracking-tight">DocSmith</span>
         </div>
         <button
           onClick={() => setMobileMenuOpen(true)}
@@ -98,7 +98,7 @@ export function Layout({ children }: LayoutProps) {
             <div className="h-14 flex items-center justify-between px-5 border-b border-border">
               <div className="flex items-center gap-2 text-primary">
                 <FileText className="h-5 w-5" />
-                <span className="font-bold text-base">DocStudio</span>
+                <span className="font-bold text-base">DocSmith</span>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}

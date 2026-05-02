@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Universal DOCX Converter"
+title = "DocSmith"
 version = "1.0.0"
 id = "artifacts/docx-converter"
 router = "path"

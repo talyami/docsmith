@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "wouter";
-import { UploadCloud, FileType, CheckCircle2, AlertCircle, Loader2, Download, ArrowRight, FileCheck, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { UploadCloud, FileType, CheckCircle2, AlertCircle, Loader2, Download, ArrowRight, FileCheck, RefreshCw, ChevronDown, ChevronUp, Sparkles, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { useListConversions, useGetConversion, getGetConversionQueryKey, useDeleteConversion, getListConversionsQueryKey } from "@workspace/api-client-react";
-import type { Conversion } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { Conversion } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -35,6 +35,7 @@ export function Home() {
   const [activeConversionId, setActiveConversionId] = useState<number | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [formatsExpanded, setFormatsExpanded] = useState(false);
+  const [useAi, setUseAi] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: conversions } = useListConversions();
@@ -75,11 +76,13 @@ export function Home() {
     if (!file) return;
     setIsCollapsed(true);
     try {
-      const result = await uploadFile(file);
+      const result = await uploadFile(file, useAi);
       setActiveConversionId(result.id);
       toast({
-        title: "File uploaded",
-        description: "Conversion started automatically.",
+        title: useAi ? "AI conversion started" : "File uploaded",
+        description: useAi
+          ? "DocSmith AI is reading and reformatting your document..."
+          : "Conversion started automatically.",
       });
     } catch (err: unknown) {
       setIsCollapsed(false);
@@ -122,11 +125,67 @@ export function Home() {
       {/* Header */}
       <div className="space-y-1.5">
         <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-foreground">
-          Document Transformation Studio
+          DocSmith
         </h1>
         <p className="text-sm sm:text-base lg:text-lg text-muted-foreground max-w-2xl">
-          Drop any messy file. We'll extract, clean, and format it into a pristine Word document.
+          Drop any messy file. DocSmith extracts, cleans, and formats it into a pristine Word document — with optional AI parsing.
         </p>
+      </div>
+
+      {/* AI Mode Toggle */}
+      <div
+        className={`relative overflow-hidden rounded-xl border-2 p-3 sm:p-4 transition-all duration-300 ${
+          useAi
+            ? "border-purple-400/60 bg-gradient-to-r from-purple-500/10 via-blue-500/5 to-purple-500/10 shadow-md shadow-purple-500/10"
+            : "border-border bg-card hover:border-primary/30"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className={`p-2 rounded-lg shrink-0 transition-colors ${
+                useAi ? "bg-purple-500/15 text-purple-600" : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {useAi ? <Sparkles className="h-5 w-5" /> : <Zap className="h-5 w-5" />}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-sm sm:text-base text-foreground">
+                  {useAi ? "AI Smart Parser" : "Standard Parser"}
+                </h3>
+                {useAi && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-purple-600 text-white px-2 py-0.5 rounded-full">
+                    AI
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground line-clamp-2">
+                {useAi
+                  ? "GPT-OSS-120B reads your document and rebuilds the structure beautifully."
+                  : "Fast, deterministic format-specific parsers. Toggle on AI for messy or complex files."}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setUseAi(!useAi)}
+            disabled={isUploading || !!activeConversion}
+            data-testid="toggle-ai-mode"
+            aria-label="Toggle AI parsing"
+            className={`relative inline-flex h-7 w-12 sm:h-8 sm:w-14 shrink-0 items-center rounded-full transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed ${
+              useAi
+                ? "bg-gradient-to-r from-purple-600 to-blue-600"
+                : "bg-muted-foreground/30"
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-white shadow-md transform transition-transform duration-300 ${
+                useAi ? "translate-x-6 sm:translate-x-7" : "translate-x-1"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 lg:gap-8">
