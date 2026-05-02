@@ -15,6 +15,7 @@ import {
   LevelFormat,
   convertMillimetersToTwip,
   TableOfContents,
+  ShadingType,
 } from "docx";
 
 export type ProcessingMode =
@@ -142,7 +143,6 @@ function makeHeading(text: string, level: 1 | 2 | 3): Paragraph {
   return new Paragraph({
     children: [new TextRun({ text, bold: true })],
     heading: headingMap[level],
-    spacing: { before: 280, after: 140 },
   });
 }
 
@@ -150,7 +150,7 @@ function makeParagraph(text: string, segments?: TextSegment[]): Paragraph {
   const runs = segments ? segmentsToRuns(segments) : [new TextRun({ text: text ?? "", size: 22 })];
   return new Paragraph({
     children: runs,
-    spacing: { after: 120 },
+    spacing: { after: 160, line: 276, lineRule: "auto" },
   });
 }
 
@@ -159,7 +159,7 @@ function makeBullet(text: string, level = 0, segments?: TextSegment[]): Paragrap
   return new Paragraph({
     children: runs,
     bullet: { level: Math.min(level, 8) },
-    spacing: { after: 60 },
+    spacing: { after: 80, line: 276, lineRule: "auto" },
   });
 }
 
@@ -168,7 +168,7 @@ function makeNumbered(text: string, level = 0, segments?: TextSegment[]): Paragr
   return new Paragraph({
     children: contentRuns,
     numbering: { reference: "numbered-list", level: Math.min(level, 8) },
-    spacing: { after: 60 },
+    spacing: { after: 80, line: 276, lineRule: "auto" },
   });
 }
 
@@ -185,8 +185,14 @@ function makeHr(): Paragraph {
 function makeTable(rows: string[][]): Table {
   if (rows.length === 0) return new Table({ rows: [] });
 
+  const colCount = Math.max(...rows.map((r) => r.length), 1);
+  const colWidth = Math.floor(9000 / colCount);
+
   const docRows = rows.map((row, rowIndex) => {
+    const isHeader = rowIndex === 0;
+    const isEven = rowIndex % 2 === 0;
     return new TableRow({
+      tableHeader: isHeader,
       children: row.map((cell) => {
         return new TableCell({
           children: [
@@ -195,20 +201,32 @@ function makeTable(rows: string[][]): Table {
                 new TextRun({
                   text: cell.trim(),
                   size: 20,
-                  bold: rowIndex === 0,
+                  bold: isHeader,
+                  color: isHeader ? "FFFFFF" : "000000",
+                  font: "Calibri",
                 }),
               ],
-              spacing: { after: 60, before: 60 },
+              spacing: { after: 80, before: 80, line: 276, lineRule: "auto" },
             }),
           ],
           borders: {
-            top: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            left: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+            top: { style: BorderStyle.SINGLE, size: isHeader ? 4 : 2, color: isHeader ? "2E5FA3" : "C8D8EE" },
+            bottom: { style: BorderStyle.SINGLE, size: isHeader ? 4 : 2, color: isHeader ? "2E5FA3" : "C8D8EE" },
+            left: { style: BorderStyle.SINGLE, size: 2, color: isHeader ? "2E5FA3" : "C8D8EE" },
+            right: { style: BorderStyle.SINGLE, size: 2, color: isHeader ? "2E5FA3" : "C8D8EE" },
           },
-          shading: rowIndex === 0 ? { fill: "EEF2F7" } : undefined,
-          width: { size: Math.floor(9000 / Math.max(row.length, 1)), type: WidthType.DXA },
+          shading: isHeader
+            ? { fill: "2E5FA3", type: ShadingType.SOLID, color: "2E5FA3" }
+            : isEven
+              ? { fill: "F2F6FC", type: ShadingType.SOLID, color: "F2F6FC" }
+              : { fill: "FFFFFF", type: ShadingType.SOLID, color: "FFFFFF" },
+          margins: {
+            top: 80,
+            bottom: 80,
+            left: 120,
+            right: 120,
+          },
+          width: { size: colWidth, type: WidthType.DXA },
         });
       }),
     });
@@ -217,6 +235,12 @@ function makeTable(rows: string[][]): Table {
   return new Table({
     rows: docRows,
     width: { size: 9000, type: WidthType.DXA },
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 6, color: "2E5FA3" },
+      bottom: { style: BorderStyle.SINGLE, size: 6, color: "2E5FA3" },
+      left: { style: BorderStyle.SINGLE, size: 6, color: "2E5FA3" },
+      right: { style: BorderStyle.SINGLE, size: 6, color: "2E5FA3" },
+    },
   });
 }
 
@@ -239,17 +263,23 @@ function blocksToDocxChildren(blocks: ContentBlock[]): (Paragraph | Table)[] {
       case "paragraph":
         children.push(makeParagraph(block.text ?? "", block.segments));
         break;
-      case "code":
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({ text: block.text ?? "", font: "Courier New", size: 20, color: "444444" }),
-            ],
-            spacing: { after: 80, before: 80 },
-            indent: { left: 720 },
-          })
-        );
+      case "code": {
+        const codeLines = (block.text ?? "").split("\n");
+        for (const codeLine of codeLines) {
+          children.push(
+            new Paragraph({
+              children: [
+                new TextRun({ text: codeLine, font: "Courier New", size: 20, color: "333333" }),
+              ],
+              spacing: { after: 0, before: 0, line: 240, lineRule: "auto" },
+              indent: { left: 360, right: 360 },
+              shading: { type: ShadingType.SOLID, fill: "F4F4F4", color: "F4F4F4" },
+            })
+          );
+        }
+        children.push(new Paragraph({ text: "", spacing: { after: 120 } }));
         break;
+      }
       case "bullet":
         children.push(makeBullet(block.text ?? "", level, block.segments));
         break;
@@ -318,38 +348,41 @@ function buildDocx(blocks: ContentBlock[]): Promise<Buffer> {
             font: "Calibri",
             size: 22,
           },
+          paragraph: {
+            spacing: { line: 276, lineRule: "auto" },
+          },
         },
         heading1: {
           run: {
             font: "Calibri",
-            size: 32,
+            size: 72,
             bold: true,
-            color: "1a1a2e",
+            color: "1F3864",
           },
           paragraph: {
-            spacing: { before: 320, after: 160 },
+            spacing: { before: 400, after: 200 },
           },
         },
         heading2: {
           run: {
             font: "Calibri",
-            size: 26,
+            size: 56,
             bold: true,
-            color: "16213e",
+            color: "2E5FA3",
           },
           paragraph: {
-            spacing: { before: 240, after: 120 },
+            spacing: { before: 320, after: 160 },
           },
         },
         heading3: {
           run: {
             font: "Calibri",
-            size: 22,
+            size: 44,
             bold: true,
-            color: "0f3460",
+            color: "4472C4",
           },
           paragraph: {
-            spacing: { before: 200, after: 80 },
+            spacing: { before: 240, after: 120 },
           },
         },
       },
@@ -505,6 +538,67 @@ function parsePlainText(content: string): ContentBlock[] {
       blocks.push({ type: headType, text: trimmed });
       i += 2;
       continue;
+    }
+
+    // ── ASCII box table (+---+---+) ───────────────────────────────────────────
+    if (/^\+[-=+]+\+/.test(trimmed)) {
+      const tableRows: string[][] = [];
+      while (i < lines.length) {
+        const rowLine = lines[i].trim();
+        if (/^\+[-=+]+\+/.test(rowLine)) {
+          // separator row, skip it
+          i++;
+          continue;
+        }
+        if (rowLine.startsWith("|") && rowLine.endsWith("|")) {
+          const cells = rowLine
+            .slice(1, -1)
+            .split("|")
+            .map((c) => c.trim());
+          tableRows.push(cells);
+          i++;
+          continue;
+        }
+        break;
+      }
+      if (tableRows.length > 0) blocks.push({ type: "table", rows: tableRows });
+      continue;
+    }
+
+    // ── Space-aligned column table (dashed separator row) ────────────────────
+    {
+      const nextRaw2 = lines[i + 1] ?? "";
+      const nextTrimmed2 = nextRaw2.trim();
+      // A separator row has 2+ groups of dashes separated by whitespace, nothing else
+      const dashGroups = nextTrimmed2.split(/\s+/).filter((g) => /^-+$/.test(g));
+      const isDashSeparator = /^[-\s]+$/.test(nextTrimmed2) && dashGroups.length >= 2;
+      if (isDashSeparator && nextTrimmed2.length > 0) {
+        // Find column boundaries from separator
+        const colBounds: Array<[number, number]> = [];
+        const sepLine = nextRaw2.replace(/\t/g, "    ");
+        let inDash = false;
+        let colStart = 0;
+        for (let ci = 0; ci <= sepLine.length; ci++) {
+          const ch = ci < sepLine.length ? sepLine[ci] : " ";
+          if (!inDash && ch === "-") { inDash = true; colStart = ci; }
+          else if (inDash && ch !== "-") { colBounds.push([colStart, ci]); inDash = false; }
+        }
+        if (colBounds.length >= 2) {
+          const extractRow = (line: string): string[] => {
+            const padded = line.replace(/\t/g, "    ").padEnd(colBounds[colBounds.length - 1][1] + 10);
+            return colBounds.map(([s, e]) => padded.slice(s, e).trim());
+          };
+          const tableRows: string[][] = [];
+          tableRows.push(extractRow(rawLine));   // header
+          i += 2;                                 // skip header + separator
+          while (i < lines.length && lines[i].trim() !== "") {
+            tableRows.push(extractRow(lines[i]));
+            i++;
+          }
+          if (tableRows.length > 0) blocks.push({ type: "table", rows: tableRows });
+          continue;
+        }
+      }
     }
 
     // ── Pipe-delimited table ──────────────────────────────────────────────────
