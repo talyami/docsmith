@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Universal DOCX Converter"
+version = "1.0.0"
+id = "artifacts/docx-converter"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22577
+
+[services.development]
+run = "pnpm --filter @workspace/docx-converter run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/docx-converter", "run", "build" ]
+publicDir = "artifacts/docx-converter/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22577"
+BASE_PATH = "/"
